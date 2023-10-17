@@ -4,10 +4,9 @@ import time
 from functools import partial
 from typing import Callable, Dict, List, Optional
 
-import gym
+import gymnasium as gym
 import numpy as np
 import pkg_resources
-from gym.utils import seeding
 
 from gym_gridverse.envs.yaml.factory import factory_env_from_yaml
 from gym_gridverse.outer_env import OuterEnv
@@ -42,13 +41,20 @@ def from_factory(factory: OuterEnvFactory):
 
 class GymEnvironment(gym.Env):
     metadata = {
-        'render.modes': ['human', 'human_state', 'human_observation'],
-        'video.frames_per_second': 50,
+        "render_modes": [
+            "human",
+            "human_state",
+            "human_observation",
+            "rgb_array",
+            "rgb_array_state",
+            "rgb_array_observation",
+        ],
+        "render_fps": 50,
     }
 
     # NOTE accepting an environment instance as input is a bad idea because it
     # would need to be instantiated during gym registration
-    def __init__(self, outer_env: OuterEnv):
+    def __init__(self, outer_env: OuterEnv, render_mode: Optional[str] = None):
         super().__init__()
 
         self.outer_env = outer_env
@@ -73,11 +79,7 @@ class GymEnvironment(gym.Env):
 
         self._state_viewer = None
         self._observation_viewer = None
-
-    def seed(self, seed: Optional[int] = None) -> List[int]:
-        actual_seed = seeding.create_seed(seed)
-        self.outer_env.inner_env.set_seed(actual_seed)
-        return [actual_seed]
+        self.render_mode = render_mode
 
     def set_state_representation(self, name: str):
         """Changes the state representation."""
@@ -111,14 +113,29 @@ class GymEnvironment(gym.Env):
         """Returns the representation of the current observation."""
         return self.outer_env.observation
 
-    def reset(self) -> Dict[str, np.ndarray]:
+    def reset(
+        self,
+        *,
+        seed: Optional[int] = None,
+        options: Optional[dict] = None,
+    ):
         """Resets the state of the environment.
 
         Returns:
             Dict[str, numpy.ndarray]: initial observation
         """
+        # Pass this seed as "None" because we generate our
+        # own random generator within inner env
+        super().reset(seed=None)
+
+        # Actually seed the environment through inner env
+        self.outer_env.inner_env.set_seed(seed)
+
         self.outer_env.reset()
-        return self.observation
+
+        if self.render_mode == "human":
+            self.render()
+        return self.observation, {}
 
     def step(self, action: int):
         """Runs the environment dynamics for one timestep.
@@ -127,33 +144,35 @@ class GymEnvironment(gym.Env):
             action (int): agent's action
 
         Returns:
-            Tuple[Dict[str, numpy.ndarray], float, bool, Dict]: (observation, reward, terminal, info dictionary)
+            Tuple[Dict[str, numpy.ndarray], float, bool, bool, Dict]: (observation, reward, terminated, truncated, info dictionary)
         """
         action_ = self.outer_env.action_space.int_to_action(action)
-        reward, done = self.outer_env.step(action_)
-        return self.observation, reward, done, {}
+        reward, terminated = self.outer_env.step(action_)
 
-    def render(self, mode='human'):
+        if self.render_mode == "human":
+            self.render()
+        return self.observation, reward, terminated, False, {}
+
+    def render(self):
+        if self.render_mode is None:
+            assert self.spec is not None
+            gym.logger.warn(
+                "You are calling render method without specifying any render mode. "
+                "You can specify the render_mode at initialization, "
+                f'e.g. gym.make("{self.spec.id}", render_mode="rgb_array")'
+            )
+            return
+
         # TODO: test
         # only import rendering if actually rendering (avoid importing when
         # using library remotely using ssh on a display-less environment)
         from gym_gridverse.rendering import GridVerseViewer
 
-        if mode not in [
-            'human',
-            'human_state',
-            'human_observation',
-            'rgb_array',
-            'rgb_array_state',
-            'rgb_array_observation',
-        ]:
-            super().render(mode)
-
         # not reset yet
         if self.outer_env.inner_env.state is None:
             return
 
-        if mode in ['human', 'human_state']:
+        if self.render_mode in ['human', 'human_state']:
             if self._state_viewer is None:
                 self._state_viewer = GridVerseViewer(
                     self.outer_env.inner_env.state_space.grid_shape,
@@ -165,7 +184,7 @@ class GymEnvironment(gym.Env):
 
             self._state_viewer.render(self.outer_env.inner_env.state)
 
-        if mode in ['human', 'human_observation']:
+        if self.render_mode in ['human', 'human_observation']:
             if self._observation_viewer is None:
                 self._observation_viewer = GridVerseViewer(
                     self.outer_env.inner_env.observation_space.grid_shape,
@@ -181,7 +200,7 @@ class GymEnvironment(gym.Env):
 
         rgb_arrays = []
 
-        if mode in ['rgb_array', 'rgb_array_state']:
+        if self.render_mode in ['rgb_array', 'rgb_array_state']:
             if self._state_viewer is None:
                 self._state_viewer = GridVerseViewer(
                     self.outer_env.inner_env.state_space.grid_shape,
@@ -197,7 +216,7 @@ class GymEnvironment(gym.Env):
             )
             rgb_arrays.append(rgb_array_state)
 
-        if mode in ['rgb_array', 'rgb_array_observation']:
+        if self.render_mode in ['rgb_array', 'rgb_array_observation']:
             if self._observation_viewer is None:
                 self._observation_viewer = GridVerseViewer(
                     self.outer_env.inner_env.observation_space.grid_shape,
@@ -246,14 +265,16 @@ class GymStateWrapper(gym.Wrapper):
     def observation(self) -> Dict[str, np.ndarray]:
         return self.env.state
 
-    def reset(self) -> Dict[str, np.ndarray]:
+    def reset(self, **kwargs) -> Dict[str, np.ndarray]:
         """reset the environment state
 
         Returns:
             Dict[str, numpy.ndarray]: initial state
         """
-        self.env.reset()
-        return self.observation
+        observation, info = self.env.reset(**kwargs)
+        info['observation'] = observation
+
+        return self.observation, info
 
     def step(self, action: int):
         """performs environment step
@@ -262,11 +283,12 @@ class GymStateWrapper(gym.Wrapper):
             action (int): agent's action
 
         Returns:
-            Tuple[Dict[str, numpy.ndarray], float, bool, Dict]: (state, reward, terminal, info dictionary)
+            Tuple[Dict[str, numpy.ndarray], float, bool, bool, Dict]: (state, reward, terminated, truncated, info dictionary)
         """
-        observation, reward, done, info = self.env.step(action)
+        observation, reward, terminated, truncated, info = self.env.step(action)
         info['observation'] = observation
-        return self.observation, reward, done, info
+
+        return self.observation, reward, terminated, truncated, info
 
 
 STRING_TO_YAML_FILE: Dict[str, str] = {

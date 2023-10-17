@@ -2,19 +2,16 @@ from typing import List, Optional, Sequence, TypeVar
 
 import numpy.random as rnd
 
+from gymnasium.utils.seeding import np_random
+
 # library-level generator, used if one is not provided (e.g. by environment)
 _gv_rng: Optional[rnd.Generator] = None
-
-
-def make_rng(seed: Optional[int] = None) -> rnd.Generator:
-    """make a new rng object"""
-    return rnd.default_rng(seed)
 
 
 def reset_gv_rng(seed: Optional[int] = None) -> rnd.Generator:
     """reset the gym-gridverse module rng"""
     global _gv_rng
-    _gv_rng = make_rng(seed)
+    _gv_rng, seed = np_random(seed)
     return _gv_rng
 
 

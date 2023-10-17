@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 import argparse
 
-import gym
+import gymnasium as gym
 import tqdm
 
 from gym_gridverse.debugging import reset_gv_debug

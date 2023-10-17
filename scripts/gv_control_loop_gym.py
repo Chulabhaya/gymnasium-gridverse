@@ -4,7 +4,7 @@ import itertools as itt
 import time
 from typing import Dict
 
-import gym
+import gymnasium as gym
 import numpy as np
 
 from gym_gridverse.envs.yaml.factory import factory_env_from_yaml
