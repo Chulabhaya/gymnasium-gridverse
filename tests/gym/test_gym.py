@@ -50,11 +50,9 @@ def test_gym_registration(env_id: str):
 def test_gym_seed(env_id: str, seed: Optional[int]):
     env = gym.make(env_id)
 
-    env.seed(seed)
-    observation1 = env.reset()
+    observation1 = env.reset(seed=seed)
 
-    env.seed(seed)
-    observation2 = env.reset()
+    observation2 = env.reset(seed=seed)
 
     np.testing.assert_equal(observation1, observation2)
 
@@ -65,9 +63,9 @@ def test_gym_control_loop():
     env.reset()
     for _ in range(10):
         action = env.action_space.sample()
-        _, _, done, _ = env.step(action)
+        _, _, terminated, truncated, _ = env.step(action)
 
-        if done:
+        if terminated or truncated:
             env.reset()
 
 
@@ -80,12 +78,12 @@ def test_gym_state_wrapper(env_id: str, representation: str):
 
     np.testing.assert_equal(env.observation_space, env.unwrapped.state_space)
 
-    observation = env.reset()
+    observation, info = env.reset()
     np.testing.assert_equal(observation, env.unwrapped.state)
     for _ in range(10):
         action = env.action_space.sample()
-        observation, _, done, _ = env.step(action)
+        observation, _, terminated, truncated, _ = env.step(action)
         np.testing.assert_equal(observation, env.unwrapped.state)
 
-        if done:
+        if terminated or truncated:
             env.reset()
