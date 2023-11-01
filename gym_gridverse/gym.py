@@ -18,6 +18,50 @@ from gym_gridverse.representations.state_representations import (
     make_state_representation,
 )
 
+import pygame
+from gym_gridverse.rendering_gv_objects import *
+from gym_gridverse.grid_object import (
+    Beacon,
+    Color,
+    Door,
+    Exit,
+    Floor,
+    GridObject,
+    Hidden,
+    Key,
+    MovingObstacle,
+    Telepod,
+    Wall,
+)
+from gym_gridverse.geometry import Orientation
+
+orientation_as_degrees = {
+    Orientation.F: 0,
+    Orientation.L: 270,
+    Orientation.B: 180,
+    Orientation.R: 90,
+}
+
+
+NONE = (191, 182, 168)
+RED = (204, 78, 92)
+GREEN = (147, 190, 139)
+BLUE = (135, 206, 235)
+YELLOW = (255, 235, 138)
+ORANGE = (255, 179, 102)
+PURPLE = (180, 160, 200)
+
+
+colormap = {
+    Color.NONE: NONE,
+    Color.RED: RED,
+    Color.GREEN: GREEN,
+    Color.BLUE: BLUE,
+    Color.YELLOW: YELLOW,
+    Color.ORANGE: ORANGE,
+    Color.PURPLE: PURPLE,
+}
+
 
 def outer_space_to_gym_space(space: Dict[str, Space]) -> gym.spaces.Space:
     return gym.spaces.Dict(
@@ -32,20 +76,11 @@ def outer_space_to_gym_space(space: Dict[str, Space]) -> gym.spaces.Space:
     )
 
 
-OuterEnvFactory = Callable[[], OuterEnv]
-
-
-def from_factory(factory: OuterEnvFactory):
-    return GymEnvironment(factory())
-
-
 class GymEnvironment(gym.Env):
     metadata = {
         "render_modes": [
-            "human",
             "human_state",
             "human_observation",
-            "rgb_array",
             "rgb_array_state",
             "rgb_array_observation",
         ],
@@ -58,28 +93,44 @@ class GymEnvironment(gym.Env):
         super().__init__()
 
         self.outer_env = outer_env
+
+        # Environment state space, if any.
         self.state_space = (
             outer_space_to_gym_space(outer_env.state_representation.space)
             if outer_env.state_representation is not None
             else None
         )
-        """Environment state space, if any."""
 
+        # Environment action space.
         self.action_space = gym.spaces.Discrete(
             outer_env.action_space.num_actions
         )
-        """Environment action space."""
 
+        # Environment observation space, if any.
         self.observation_space = (
             outer_space_to_gym_space(outer_env.observation_representation.space)
             if outer_env.observation_representation is not None
             else None
         )
-        """Environment observation space, if any."""
 
-        self._state_viewer = None
-        self._observation_viewer = None
+        # Set up rendering details.
+        assert (
+            render_mode is None or render_mode in self.metadata["render_modes"]
+        )
         self.render_mode = render_mode
+        self.window_scaling = (
+            50  # Multiplier for converting state/obs grids to pixels
+        )
+
+        """
+        If human-rendering is used, `self.window` will be a reference
+        to the window that we draw to. `self.clock` will be a clock that is used
+        to ensure that the environment is rendered at the correct framerate in
+        human-mode. They will remain `None` until human-mode is used for the
+        first time.
+        """
+        self.window = None
+        self.clock = None
 
     def set_state_representation(self, name: str):
         """Changes the state representation."""
@@ -133,8 +184,11 @@ class GymEnvironment(gym.Env):
 
         self.outer_env.reset()
 
-        if self.render_mode == "human":
-            self.render()
+        if (
+            self.render_mode == "human_state"
+            or self.render_mode == "human_observation"
+        ):
+            self._render_frame()
         return self.observation, {}
 
     def step(self, action: int):
@@ -149,101 +203,152 @@ class GymEnvironment(gym.Env):
         action_ = self.outer_env.action_space.int_to_action(action)
         reward, terminated = self.outer_env.step(action_)
 
-        if self.render_mode == "human":
-            self.render()
+        if (
+            self.render_mode == "human_state"
+            or self.render_mode == "human_observation"
+        ):
+            self._render_frame()
         return self.observation, reward, terminated, False, {}
 
     def render(self):
-        if self.render_mode is None:
-            assert self.spec is not None
-            gym.logger.warn(
-                "You are calling render method without specifying any render mode. "
-                "You can specify the render_mode at initialization, "
-                f'e.g. gym.make("{self.spec.id}", render_mode="rgb_array")'
-            )
-            return
+        if (
+            self.render_mode == "rgb_array_state"
+            or self.render_mode == "rgb_array_observation"
+        ):
+            return self._render_frame()
 
-        # TODO: test
-        # only import rendering if actually rendering (avoid importing when
-        # using library remotely using ssh on a display-less environment)
-        from gym_gridverse.rendering import GridVerseViewer
-
-        # not reset yet
+    def _render_frame(self):
+        # Not reset yet
         if self.outer_env.inner_env.state is None:
             return
 
-        if self.render_mode in ['human', 'human_state']:
-            if self._state_viewer is None:
-                self._state_viewer = GridVerseViewer(
-                    self.outer_env.inner_env.state_space.grid_shape,
-                    caption='State',
+        # Initialize PyGame and clock
+        if self.window is None and (
+            self.render_mode == "human_state"
+            or self.render_mode == "human_observation"
+        ):
+            pygame.init()
+            pygame.display.init()
+        if self.clock is None and (
+            self.render_mode == "human_state"
+            or self.render_mode == "human_observation"
+        ):
+            self.clock = pygame.time.Clock()
+
+        # Get grid shape and state/observation depending on state or observation rendering
+        if (
+            self.render_mode == "human_state"
+            or self.render_mode == "rgb_array_state"
+        ):
+            grid_shape = self.outer_env.inner_env.state_space.grid_shape
+            state_or_observation = self.outer_env.inner_env.state
+        elif (
+            self.render_mode == "human_observation"
+            or self.render_mode == "rgb_array_observation"
+        ):
+            grid_shape = self.outer_env.inner_env.observation_space.grid_shape
+            state_or_observation = self.outer_env.inner_env.observation
+        else:
+            raise ValueError('Render mode not recognized!')
+
+        # Do the rendering
+        grid_height = grid_shape.height
+        grid_width = grid_shape.width
+        window_height = grid_height * self.window_scaling
+        window_width = grid_width * self.window_scaling
+        if (
+            self.render_mode == "human_state"
+            or self.render_mode == "human_observation"
+        ):
+            self.window = pygame.display.set_mode((window_width, window_height))
+
+        # Render state or observation
+        canvas = pygame.Surface((window_width, window_height))
+        canvas.fill((255, 255, 255))
+        for position in state_or_observation.grid.area.positions():
+            obj = state_or_observation.grid[position]
+            # Modify y position because pyglet (0, 0) is bottom left,
+            # while GV (0, 0) is top left
+            obj_position = (position.x, position.y)
+
+            if isinstance(obj, Floor):
+                create_floor(canvas, obj_position, self.window_scaling)
+
+            elif isinstance(obj, Hidden):
+                create_hidden(canvas, obj_position, self.window_scaling)
+
+            elif isinstance(obj, Wall):
+                create_wall(canvas, obj_position, self.window_scaling)
+
+            elif isinstance(obj, Key):
+                create_key(canvas, obj_position, self.window_scaling)
+
+            elif isinstance(obj, Door):
+                if obj.is_open:
+                    create_door_open(canvas, obj_position, self.window_scaling)
+                elif obj.is_locked:
+                    create_door_closed_locked(
+                        canvas, obj_position, self.window_scaling
+                    )
+                else:
+                    create_door_closed_unlocked(
+                        canvas, obj_position, self.window_scaling
+                    )
+
+            elif isinstance(obj, Exit):
+                color = colormap[obj.color]
+                create_exit(canvas, obj_position, self.window_scaling, color)
+
+            elif isinstance(obj, MovingObstacle):
+                create_moving_obstacle(
+                    canvas, obj_position, self.window_scaling
                 )
 
-                # without sleep the first frame could be black
-                time.sleep(0.05)
+            elif isinstance(obj, Telepod):
+                create_portal(canvas, obj_position, self.window_scaling)
 
-            self._state_viewer.render(self.outer_env.inner_env.state)
+            elif isinstance(obj, Beacon):
+                color = colormap[obj.color]
+                create_beacon(canvas, obj_position, self.window_scaling, color)
+            else:
+                create_unknown(canvas, obj_position, self.window_scaling)
 
-        if self.render_mode in ['human', 'human_observation']:
-            if self._observation_viewer is None:
-                self._observation_viewer = GridVerseViewer(
-                    self.outer_env.inner_env.observation_space.grid_shape,
-                    caption='Observation',
-                )
+        # Draw agent
+        agent = state_or_observation.agent
+        agent_position = (agent.position.x, agent.position.y)
+        agent_orientation = orientation_as_degrees[agent.orientation]
+        create_agent(
+            canvas,
+            agent_position,
+            agent_orientation,
+            (1, 1),
+            self.window_scaling,
+        )
 
-                # without sleep the first frame could be black
-                time.sleep(0.05)
+        # Draw grid
+        create_grid(canvas, (grid_width, grid_height), self.window_scaling)
 
-            self._observation_viewer.render(
-                self.outer_env.inner_env.observation
+        if (
+            self.render_mode == "human_state"
+            or self.render_mode == "human_observation"
+        ):
+            # The following line copies our drawings from `canvas` to the visible window
+            self.window.blit(canvas, canvas.get_rect())
+            pygame.event.pump()
+            pygame.display.update()
+
+            # We need to ensure that human-rendering occurs at the predefined framerate.
+            # The following line will automatically add a delay to keep the framerate stable.
+            self.clock.tick(self.metadata["render_fps"])
+        else:  # rgb_array
+            return np.transpose(
+                np.array(pygame.surfarray.pixels3d(canvas)), axes=(1, 0, 2)
             )
-
-        rgb_arrays = []
-
-        if self.render_mode in ['rgb_array', 'rgb_array_state']:
-            if self._state_viewer is None:
-                self._state_viewer = GridVerseViewer(
-                    self.outer_env.inner_env.state_space.grid_shape,
-                    caption='State',
-                )
-
-                # without sleep the first frame could be black
-                time.sleep(0.05)
-
-            rgb_array_state = self._state_viewer.render(
-                self.outer_env.inner_env.state,
-                return_rgb_array=True,
-            )
-            rgb_arrays.append(rgb_array_state)
-
-        if self.render_mode in ['rgb_array', 'rgb_array_observation']:
-            if self._observation_viewer is None:
-                self._observation_viewer = GridVerseViewer(
-                    self.outer_env.inner_env.observation_space.grid_shape,
-                    caption='Observation',
-                )
-
-                # without sleep the first frame could be black
-                time.sleep(0.05)
-
-            rgb_array_observation = self._observation_viewer.render(
-                self.outer_env.inner_env.observation,
-                return_rgb_array=True,
-            )
-            rgb_arrays.append(rgb_array_observation)
-
-        if rgb_arrays:
-            return tuple(rgb_arrays) if len(rgb_arrays) > 1 else rgb_arrays[0]
 
     def close(self):
-        # TODO: test
-        if self._state_viewer is not None:
-            self._state_viewer.close()
-            self._state_viewer = None
-
-        if self._observation_viewer is not None:
-            self._observation_viewer.close()
-            self._observation_viewer = None
+        if self.window is not None:
+            pygame.display.quit()
+            pygame.quit()
 
 
 class GymStateWrapper(gym.Wrapper):
@@ -314,6 +419,16 @@ STRING_TO_YAML_FILE: Dict[str, str] = {
     "GV-Teleport-5x5-v0": "gv_teleport.5x5.yaml",
     "GV-Teleport-7x7-v0": "gv_teleport.7x7.yaml",
 }
+
+OuterEnvFactory = Callable[[], OuterEnv]
+
+
+def from_factory(factory: OuterEnvFactory, render_mode: Optional[str] = None):
+    return GymEnvironment(factory(), render_mode)
+
+
+# This is added for compatibility with the gymnasium.make function
+from_factory.metadata = GymEnvironment.metadata
 
 
 def outer_env_factory(yaml_filename: str) -> OuterEnv:

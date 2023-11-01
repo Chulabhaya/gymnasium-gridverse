@@ -22,7 +22,7 @@ def make_env(id_or_path: str) -> GymEnvironment:
     """Makes a GV gym environment."""
     try:
         print('Loading using gym.make')
-        env = gym.make(id_or_path)
+        env = gym.make(id_or_path, render_mode="human_state")
 
     except gym.error.Error:
         print(f'Environment with id {id_or_path} not found.')
@@ -42,10 +42,10 @@ def make_env(id_or_path: str) -> GymEnvironment:
             state_representation=state_representation,
             observation_representation=observation_representation,
         )
-        env = GymEnvironment(outer_env)
+        env = GymEnvironment(outer_env, render_mode="human_observation")
 
     else:
-        if not isinstance(env, GymEnvironment):
+        if not isinstance(env.unwrapped, GymEnvironment):
             raise ValueError(
                 f'gym id {id_or_path} is not associated with a GridVerse environment'
             )
@@ -69,8 +69,7 @@ def main(args):
         print(f'# Episode {ei}')
         print()
 
-        observation = env.reset()
-        env.render()
+        observation, info = env.reset()
 
         print('observation:')
         print_compact(observation)
@@ -83,25 +82,24 @@ def main(args):
             print(f'time: {ti}')
 
             action = env.action_space.sample()
-            observation, reward, done, _ = env.step(action)
-            env.render()
+            observation, reward, terminated, truncated, _ = env.step(action)
 
             print(f'action: {action}')
             print(f'reward: {reward}')
             print('observation:')
             print_compact(observation)
-            print(f'done: {done}')
+            print(f'done: {terminated or truncated}')
             print()
 
             time.sleep(spf)
 
-            if done:
+            if terminated or truncated:
                 break
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('id_or_path', help='Gym id or GV YAML file')
+    parser.add_argument('--id_or_path', default="GV-Teleport-7x7-v0", help='Gym id or GV YAML file')
     parser.add_argument(
         '--fps', type=float, default=1.0, help='frames per second'
     )

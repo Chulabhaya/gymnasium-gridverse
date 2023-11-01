@@ -17,6 +17,8 @@ class Color(enum.Enum):
     GREEN = enum.auto()
     BLUE = enum.auto()
     YELLOW = enum.auto()
+    ORANGE = enum.auto()
+    PURPLE = enum.auto()
 
 
 class GridObjectRegistry(UserList):
