@@ -163,7 +163,7 @@ class GymEnvironment(gym.Env):
     def observation(self) -> Dict[str, np.ndarray]:
         """Returns the representation of the current observation."""
         return self.outer_env.observation
-
+    
     def reset(
         self,
         *,
@@ -175,12 +175,10 @@ class GymEnvironment(gym.Env):
         Returns:
             Dict[str, numpy.ndarray]: initial observation
         """
-        # Pass this seed as "None" because we generate our
-        # own random generator within inner env
-        super().reset(seed=None)
-
-        # Actually seed the environment through inner env
-        self.outer_env.inner_env.set_seed(seed)
+        # Set seeding
+        super().reset(seed=seed)
+        if seed is not None:
+            self.outer_env.inner_env.set_seed(seed)
 
         self.outer_env.reset()
 

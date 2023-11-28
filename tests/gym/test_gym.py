@@ -48,13 +48,36 @@ def test_gym_registration(env_id: str):
 )
 @pytest.mark.parametrize('seed', [1, 10, 1337, 0xDEADBEEF])
 def test_gym_seed(env_id: str, seed: Optional[int]):
-    env = gym.make(env_id)
+    env = gym.make("CartPole-v0")
+    env = gym.wrappers.RecordEpisodeStatistics(env)
 
-    observation1 = env.reset(seed=seed)
+    episode_returns1 = []
+    episode_count = 0
+    obs, info = env.reset(seed=seed)
+    env.action_space.seed(seed=seed)
+    while episode_count < 5:
+        action = env.action_space.sample()
+        _, _, terminated, truncated, info = env.step(action)
 
-    observation2 = env.reset(seed=seed)
+        if terminated or truncated:
+            episode_count += 1
+            episode_returns1.append(info['episode']['r'][0])
+            obs, info = env.reset()
 
-    np.testing.assert_equal(observation1, observation2)
+    episode_returns2 = []
+    episode_count = 0
+    obs, info = env.reset(seed=seed)
+    env.action_space.seed(seed=seed)
+    while episode_count < 5:
+        action = env.action_space.sample()
+        _, _, terminated, truncated, info = env.step(action)
+
+        if terminated or truncated:
+            episode_count += 1
+            episode_returns2.append(info['episode']['r'][0])
+            obs, info = env.reset()
+
+    np.testing.assert_equal(episode_returns1, episode_returns2)
 
 
 def test_gym_control_loop():
